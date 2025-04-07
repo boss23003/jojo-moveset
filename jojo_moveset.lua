@@ -1,47 +1,30 @@
--- JoJo-стиль кастомизация для персонажа Сайтама в The Strongest Battlegrounds
--- Авторский скрипт под loadstring
+-- [✅ JoJo Moveset] Финальная рабочая версия
+
+-- Удаление фоновой музыки
+for _,v in pairs(game:GetDescendants()) do
+    if v:IsA("Sound") and v.Parent.Name == "Music" then
+        v:Destroy()
+    end
+end
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local Debris = game:GetService("Debris")
 
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
 local humanoid = character:WaitForChild("Humanoid")
 
--- Функция для поиска существующих анимаций в игре
-local function findAnimation(name)
-    for _, v in pairs(game:GetDescendants()) do
-        if v:IsA("Animation") and v.Name == name then
-            return v.AnimationId
-        end
-    end
-    return nil
-end
-
--- Анимации скиллов
-local skills = {
-    [1] = findAnimation("Punch") or "rbxassetid://507771019",   -- Удар рукой вперед
-    [2] = findAnimation("RapidPunches") or "rbxassetid://10921154034", -- Быстрые удары (ORA ORA)
-    [3] = findAnimation("Kick") or "rbxassetid://507767968",   -- Толчок ногой
-    [4] = findAnimation("Uppercut") or "rbxassetid://10921099718", -- Удар ногой вверх
-}
-
 -- Создание стенда
 local stand = character:Clone()
 stand.Name = "Stand"
+stand.Parent = workspace
 
--- Удаление ненужных объектов из стенда
-for _, v in pairs(stand:GetDescendants()) do
+-- Удаляем всё лишнее в стенде
+for _,v in pairs(stand:GetDescendants()) do
     if v:IsA("Tool") or v:IsA("Script") or v:IsA("LocalScript") then
         v:Destroy()
-    end
-end
-
--- Настройка внешнего вида стенда
-for _, v in pairs(stand:GetDescendants()) do
-    if v:IsA("BasePart") then
+    elseif v:IsA("BasePart") then
         v.Transparency = 0.5
         v.CanCollide = false
         v.Material = Enum.Material.ForceField
@@ -49,64 +32,96 @@ for _, v in pairs(stand:GetDescendants()) do
     end
 end
 
-local standHumanoid = stand:FindFirstChildWhichIsA("Humanoid")
+-- Постоянная анимация боевой позы (взята из эмоции)
+local function loadEmoteAnimation(hum)
+    for _,desc in pairs(game:GetDescendants()) do
+        if desc:IsA("Animation") and desc.Name:lower():find("idle") then
+            local anim = Instance.new("Animation")
+            anim.AnimationId = desc.AnimationId
+            local track = hum:LoadAnimation(anim)
+            track:Play()
+            track.Looped = true
+            break
+        end
+    end
+end
 
--- Применение боевой позы из эмоций
-local poseAnim = findAnimation("BattlePose") or "rbxassetid://507766388"
-local pose = Instance.new("Animation")
-pose.AnimationId = poseAnim
-local poseTrack = standHumanoid:LoadAnimation(pose)
-poseTrack.Looped = true
-poseTrack:Play()
-
-stand.Parent = workspace
-
--- Синхронизация позиции стенда с персонажем
+-- Стенд следует за игроком
 RunService.RenderStepped:Connect(function()
-    if character and character:FindFirstChild("HumanoidRootPart") then
-        stand:PivotTo(character.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3 + math.sin(tick() * 2) * 0.5))
+    if character:FindFirstChild("HumanoidRootPart") then
+        local offset = CFrame.new(2, 0, 3 + math.sin(tick()*2)*0.5)
+        stand:PivotTo(character.HumanoidRootPart.CFrame * offset)
     end
 end)
 
--- Функция для воспроизведения анимации скилла
-local function playSkill(skillIndex)
-    local anim = Instance.new("Animation")
-    anim.AnimationId = skills[skillIndex]
-    local track = humanoid:LoadAnimation(anim)
-    track:Play()
+-- Анимации скиллов из других персонажей/эмоций
+local skillAnims = {
+    Punch = nil,
+    OraBarrage = {},
+    Kick = nil,
+    Uppercut = nil
+}
 
-    -- Стенд повторяет анимацию
-    local standAnim = Instance.new("Animation")
-    standAnim.AnimationId = skills[skillIndex]
-    local standTrack = standHumanoid:LoadAnimation(standAnim)
-    standTrack:Play()
+-- Автоматический выбор доступных анимаций из игры
+for _,desc in pairs(game:GetDescendants()) do
+    if desc:IsA("Animation") then
+        local id = desc.AnimationId
+        local name = desc.Name:lower()
+
+        if name:find("kick") and not skillAnims.Kick then
+            skillAnims.Kick = id
+        elseif name:find("upper") and not skillAnims.Uppercut then
+            skillAnims.Uppercut = id
+        elseif name:find("punch") and not skillAnims.Punch then
+            skillAnims.Punch = id
+        elseif name:find("barrage") or name:find("spam") or name:find("rapid") then
+            table.insert(skillAnims.OraBarrage, id)
+        end
+    end
 end
 
--- Функция для воспроизведения звука ORA
+-- Звук ORA ORA
 local function playORA()
     local sound = Instance.new("Sound", character)
-    sound.SoundId = "rbxassetid://1093100474"
+    sound.SoundId = "rbxassetid://1093100474" -- ORA ORA
     sound.Volume = 2
     sound:Play()
-    Debris:AddItem(sound, 3)
+    game.Debris:AddItem(sound, 3)
 end
 
--- Обработка ввода пользователя для активации скиллов
+-- Проиграть анимацию скила
+local function playSkill(animId)
+    if not animId then return end
+    local anim = Instance.new("Animation")
+    anim.AnimationId = animId
+    humanoid:LoadAnimation(anim):Play()
+    local standHum = stand:FindFirstChildWhichIsA("Humanoid")
+    if standHum then
+        standHum:LoadAnimation(anim):Play()
+    end
+end
+
+-- Навешиваем скиллы на кнопки
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
+
     if input.KeyCode == Enum.KeyCode.One then
-        playSkill(1)
+        playSkill(skillAnims.Punch)
     elseif input.KeyCode == Enum.KeyCode.Two then
-        for _ = 1, 5 do
-            playSkill(2)
-            playORA()
+        playORA()
+        for i = 1, 5 do
+            local id = skillAnims.OraBarrage[math.random(1, #skillAnims.OraBarrage)]
+            playSkill(id)
             wait(0.15)
         end
     elseif input.KeyCode == Enum.KeyCode.Three then
-        playSkill(3)
+        playSkill(skillAnims.Kick)
     elseif input.KeyCode == Enum.KeyCode.Four then
-        playSkill(4)
+        playSkill(skillAnims.Uppercut)
     end
 end)
 
-print("[JoJo Moveset] Скрипт активирован!")
+-- Стартовая поза для стенда
+loadEmoteAnimation(stand:WaitForChild("Humanoid"))
+
+print("[✅ JoJo Moveset] Загружен и активирован!")
