@@ -1,78 +1,65 @@
-loadstring(game:HttpGet("https://raw.githubusercontent.com/Reapvitalized/TSB/refs/heads/main/VEXOR.lua"))()
+-- JoJo Moveset for The Strongest Battlegrounds (Saitama Base)
 
--- wait for character
-repeat wait() until game.Players.LocalPlayer.Character
-local plr = game.Players.LocalPlayer
-local char = plr.Character
-local hum = char:WaitForChild("Humanoid")
-local hrp = char:WaitForChild("HumanoidRootPart")
+local Player = game.Players.LocalPlayer
+local Character = Player.Character or Player.CharacterAdded:Wait()
+local Humanoid = Character:WaitForChild("Humanoid")
 
--- === STAND ===
-local stand = char:Clone()
-stand.Name = "Stand"
-stand.Parent = workspace
-stand.HumanoidRootPart.Anchored = true
-stand.HumanoidRootPart.CanCollide = false
-stand.HumanoidRootPart.Transparency = 1
+-- Удаляем музыку и анимации из базы
+for _, s in pairs(Character:GetDescendants()) do
+	if s:IsA("Sound") then
+		s:Destroy()
+	elseif s:IsA("Animation") then
+		s:Destroy()
+	end
+end
 
--- Set visual
-for _,v in pairs(stand:GetDescendants()) do
-	if v:IsA("BasePart") or v:IsA("Decal") then
-		v.Transparency = v.Transparency < 1 and 0.5 or v.Transparency
-		if v:IsA("BasePart") then
-			v.Color = Color3.fromRGB(128, 64, 255)
+-- Создание стенда
+local function createStand()
+	local stand = Character:Clone()
+	stand.Name = "Stand"
+	
+	for _, part in ipairs(stand:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.Anchored = false
+			part.CanCollide = false
+			part.Transparency = 0.5
+			part.Material = Enum.Material.ForceField
+			part.Color = Color3.fromRGB(120, 0, 180)
 		end
 	end
-end
 
--- Remove tools from stand
-for _, tool in pairs(stand:GetChildren()) do
-	if tool:IsA("Tool") then tool:Destroy() end
-end
-
--- idle animation (crossed arms)
-local idleAnim = Instance.new("Animation")
-idleAnim.AnimationId = "rbxassetid://10921240139" -- пример: emotion-crossed arms
-local idleTrack = stand.Humanoid:LoadAnimation(idleAnim)
-idleTrack:Play()
-
--- float effect
-task.spawn(function()
-	while stand.Parent == workspace do
-		for i = 1, 30 do
-			stand:PivotTo(hrp.CFrame * CFrame.new(2, 3 + math.sin(tick()*2)/2, 0))
-			wait(0.033)
-		end
+	-- Анимация скрещённых рук
+	local animate = stand:FindFirstChild("Animate")
+	if animate then
+		animate:Destroy()
 	end
-end)
 
--- follow animations
-local function copyAnimTracks()
-	for _, track in pairs(hum:GetPlayingAnimationTracks()) do
-		local new = stand.Humanoid:LoadAnimation(track.Animation)
-		new:Play()
+	local animator = stand:FindFirstChildOfClass("Humanoid"):FindFirstChildOfClass("Animator")
+	if not animator then
+		animator = Instance.new("Animator")
+		animator.Parent = stand:FindFirstChildOfClass("Humanoid")
 	end
-end
 
-hum.AnimationPlayed:Connect(function(anim)
-	local clone = stand.Humanoid:LoadAnimation(anim)
-	clone:Play()
-end)
+	local anim = Instance.new("Animation")
+	anim.AnimationId = "rbxassetid://507770239" -- Пример: idle с руками на груди
+	local track = animator:LoadAnimation(anim)
+	track:Play()
+	track.Looped = true
 
--- === ORA ORA on 2nd Skill ===
-local UIS = game:GetService("UserInputService")
-UIS.InputBegan:Connect(function(input, gpe)
-	if gpe then return end
-	if input.KeyCode == Enum.KeyCode.Two then
-		task.spawn(function()
-			for i = 1, 6 do
-				local sound = Instance.new("Sound", hrp)
-				sound.SoundId = "rbxassetid://10478533824" -- ORA ORA ORA звук
-				sound.Volume = 2
-				sound:Play()
-				game:GetService("Debris"):AddItem(sound, 1)
-				wait(0.2)
+	-- Присоединить к игроку
+	stand.Parent = workspace
+
+	-- Обновлять позицию за игроком
+	game:GetService("RunService").RenderStepped:Connect(function()
+		if Character and stand then
+			local root = Character:FindFirstChild("HumanoidRootPart")
+			local standRoot = stand:FindFirstChild("HumanoidRootPart")
+			if root and standRoot then
+				local targetPos = root.CFrame * CFrame.new(0, 0, 3)
+				standRoot.CFrame = standRoot.CFrame:Lerp(targetPos * CFrame.Angles(0, math.rad(180), 0), 0.1)
 			end
-		end)
-	end
-end)
+		end
+	end)
+end
+
+createStand()
