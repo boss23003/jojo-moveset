@@ -1,28 +1,34 @@
--- JoJo-стиль кастомизация для персонажа Сайтама в TSB
--- Авторский скрипт под loadstring
+-- [JoJo Moveset] Custom Script for Saitama in TSB
+-- by @yourgithubusername
 
--- Удаление стандартных анимаций и музыки
+-- Удаляем стандартные анимации и музыку
 for _,v in pairs(game:GetDescendants()) do
-    if v:IsA("Animation") or v:IsA("Sound") and v.Parent.Name == "Music" then
+    if v:IsA("Animation") or (v:IsA("Sound") and v.Parent.Name == "Music") then
         v:Destroy()
     end
 end
 
--- Создание стенда
-local player = game.Players.LocalPlayer
-local character = player.Character or player.CharacterAdded:Wait()
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Debris = game:GetService("Debris")
 
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+
+-- === СТЕНД ===
 local stand = character:Clone()
 stand.Name = "Stand"
 
--- Удаляем лишнее (инструменты и скрипты)
+-- Удаление лишнего
 for _,v in pairs(stand:GetDescendants()) do
     if v:IsA("Tool") or v:IsA("Script") or v:IsA("LocalScript") then
         v:Destroy()
     end
 end
 
--- Прозрачность и визуальный стиль
+-- Визуальный стиль стенда
 for _,v in pairs(stand:GetDescendants()) do
     if v:IsA("BasePart") then
         v.Transparency = 0.5
@@ -32,65 +38,74 @@ for _,v in pairs(stand:GetDescendants()) do
     end
 end
 
+-- Поза стенда
+local standHumanoid = stand:FindFirstChildWhichIsA("Humanoid")
+local pose = Instance.new("Animation")
+pose.AnimationId = "rbxassetid://507766388"
+local poseTrack = standHumanoid:LoadAnimation(pose)
+poseTrack.Looped = true
+poseTrack:Play()
+
 stand.Parent = workspace
 
--- Привязка к игроку
-local runService = game:GetService("RunService")
-runService.RenderStepped:Connect(function()
+-- Слежение стенда за игроком
+RunService.RenderStepped:Connect(function()
     if character and character:FindFirstChild("HumanoidRootPart") then
-        stand:PivotTo(
-            character.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3 + math.sin(tick()*2)*0.5)
-        )
+        stand:PivotTo(character.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3 + math.sin(tick()*2)*0.5))
     end
 end)
 
--- Боевая поза: стойка с руками
-local anim = Instance.new("Animation")
-anim.AnimationId = "rbxassetid://507766388" -- Пример позы
-local animTrack = stand:FindFirstChildWhichIsA("Humanoid"):LoadAnimation(anim)
-animTrack:Play()
-animTrack.Looped = true
+-- === КАСТОМНЫЕ АНИМАЦИИ СКИЛЛОВ ===
+local skills = {
+    [1] = "rbxassetid://14884037181", -- выдвижение руки вперёд
+    [2] = "rbxassetid://14884041959", -- ORA ORA серия
+    [3] = "rbxassetid://507766666",   -- толчок ногой
+    [4] = "rbxassetid://11450616329", -- оперкот ногой
+}
 
--- Анимации скиллов
-local humanoid = character:FindFirstChildOfClass("Humanoid")
-if humanoid then
-    local anims = {
-        [1] = "rbxassetid://14884037181", -- обычная атака
-        [2] = "rbxassetid://14884041959", -- ORA ORA спам
-        [3] = "rbxassetid://507766666",   -- удар ногой
-        [4] = "rbxassetid://11450616329", -- оперкот
-    }
-
-    for key, id in pairs(anims) do
-        local a = Instance.new("Animation")
-        a.AnimationId = id
-        humanoid:LoadAnimation(a)
-    end
+local function playSkill(skillIndex)
+    local anim = Instance.new("Animation")
+    anim.AnimationId = skills[skillIndex]
+    local track = humanoid:LoadAnimation(anim)
+    track:Play()
+    
+    -- Анимация стенда
+    local standAnim = Instance.new("Animation")
+    standAnim.AnimationId = skills[skillIndex]
+    local standTrack = standHumanoid:LoadAnimation(standAnim)
+    standTrack:Play()
 end
 
--- Звук ORA ORA ORA
+-- ORA звук
 local function playORA()
     local sound = Instance.new("Sound", character)
-    sound.SoundId = "rbxassetid://1093100474" -- ORA звук
+    sound.SoundId = "rbxassetid://1093100474"
     sound.Volume = 2
     sound:Play()
-    game.Debris:AddItem(sound, 3)
+    Debris:AddItem(sound, 3)
 end
 
--- Вешаем на 2 скилл активацию звука и повторение ударов
-local UserInputService = game:GetService("UserInputService")
+-- Управление скиллами
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
-    if input.KeyCode == Enum.KeyCode.Two then
-        playORA()
+
+    if input.KeyCode == Enum.KeyCode.One then
+        playSkill(1)
+
+    elseif input.KeyCode == Enum.KeyCode.Two then
+        -- ORA ORA спам
         for _ = 1, 5 do
-            local anim = Instance.new("Animation")
-            anim.AnimationId = "rbxassetid://14884041959"
-            local track = humanoid:LoadAnimation(anim)
-            track:Play()
+            playSkill(2)
+            playORA()
             wait(0.15)
         end
+
+    elseif input.KeyCode == Enum.KeyCode.Three then
+        playSkill(3)
+
+    elseif input.KeyCode == Enum.KeyCode.Four then
+        playSkill(4)
     end
 end)
 
-print("[JoJo Moveset] Скрипт активирован!")
+print("[JoJo Moveset] Скрипт активирован! ZA WARUDO!")
