@@ -1,65 +1,96 @@
--- JoJo Moveset for The Strongest Battlegrounds (Saitama Base)
+-- JoJo-стиль кастомизация для персонажа Сайтама в TSB
+-- Авторский скрипт под loadstring
 
-local Player = game.Players.LocalPlayer
-local Character = Player.Character or Player.CharacterAdded:Wait()
-local Humanoid = Character:WaitForChild("Humanoid")
-
--- Удаляем музыку и анимации из базы
-for _, s in pairs(Character:GetDescendants()) do
-	if s:IsA("Sound") then
-		s:Destroy()
-	elseif s:IsA("Animation") then
-		s:Destroy()
-	end
+-- Удаление стандартных анимаций и музыки
+for _,v in pairs(game:GetDescendants()) do
+    if v:IsA("Animation") or v:IsA("Sound") and v.Parent.Name == "Music" then
+        v:Destroy()
+    end
 end
 
 -- Создание стенда
-local function createStand()
-	local stand = Character:Clone()
-	stand.Name = "Stand"
-	
-	for _, part in ipairs(stand:GetDescendants()) do
-		if part:IsA("BasePart") then
-			part.Anchored = false
-			part.CanCollide = false
-			part.Transparency = 0.5
-			part.Material = Enum.Material.ForceField
-			part.Color = Color3.fromRGB(120, 0, 180)
-		end
-	end
+local player = game.Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
 
-	-- Анимация скрещённых рук
-	local animate = stand:FindFirstChild("Animate")
-	if animate then
-		animate:Destroy()
-	end
+local stand = character:Clone()
+stand.Name = "Stand"
 
-	local animator = stand:FindFirstChildOfClass("Humanoid"):FindFirstChildOfClass("Animator")
-	if not animator then
-		animator = Instance.new("Animator")
-		animator.Parent = stand:FindFirstChildOfClass("Humanoid")
-	end
-
-	local anim = Instance.new("Animation")
-	anim.AnimationId = "rbxassetid://507770239" -- Пример: idle с руками на груди
-	local track = animator:LoadAnimation(anim)
-	track:Play()
-	track.Looped = true
-
-	-- Присоединить к игроку
-	stand.Parent = workspace
-
-	-- Обновлять позицию за игроком
-	game:GetService("RunService").RenderStepped:Connect(function()
-		if Character and stand then
-			local root = Character:FindFirstChild("HumanoidRootPart")
-			local standRoot = stand:FindFirstChild("HumanoidRootPart")
-			if root and standRoot then
-				local targetPos = root.CFrame * CFrame.new(0, 0, 3)
-				standRoot.CFrame = standRoot.CFrame:Lerp(targetPos * CFrame.Angles(0, math.rad(180), 0), 0.1)
-			end
-		end
-	end)
+-- Удаляем лишнее (инструменты и скрипты)
+for _,v in pairs(stand:GetDescendants()) do
+    if v:IsA("Tool") or v:IsA("Script") or v:IsA("LocalScript") then
+        v:Destroy()
+    end
 end
 
-createStand()
+-- Прозрачность и визуальный стиль
+for _,v in pairs(stand:GetDescendants()) do
+    if v:IsA("BasePart") then
+        v.Transparency = 0.5
+        v.CanCollide = false
+        v.Material = Enum.Material.ForceField
+        v.Color = Color3.fromRGB(150, 0, 255)
+    end
+end
+
+stand.Parent = workspace
+
+-- Привязка к игроку
+local runService = game:GetService("RunService")
+runService.RenderStepped:Connect(function()
+    if character and character:FindFirstChild("HumanoidRootPart") then
+        stand:PivotTo(
+            character.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3 + math.sin(tick()*2)*0.5)
+        )
+    end
+end)
+
+-- Боевая поза: стойка с руками
+local anim = Instance.new("Animation")
+anim.AnimationId = "rbxassetid://507766388" -- Пример позы
+local animTrack = stand:FindFirstChildWhichIsA("Humanoid"):LoadAnimation(anim)
+animTrack:Play()
+animTrack.Looped = true
+
+-- Анимации скиллов
+local humanoid = character:FindFirstChildOfClass("Humanoid")
+if humanoid then
+    local anims = {
+        [1] = "rbxassetid://14884037181", -- обычная атака
+        [2] = "rbxassetid://14884041959", -- ORA ORA спам
+        [3] = "rbxassetid://507766666",   -- удар ногой
+        [4] = "rbxassetid://11450616329", -- оперкот
+    }
+
+    for key, id in pairs(anims) do
+        local a = Instance.new("Animation")
+        a.AnimationId = id
+        humanoid:LoadAnimation(a)
+    end
+end
+
+-- Звук ORA ORA ORA
+local function playORA()
+    local sound = Instance.new("Sound", character)
+    sound.SoundId = "rbxassetid://1093100474" -- ORA звук
+    sound.Volume = 2
+    sound:Play()
+    game.Debris:AddItem(sound, 3)
+end
+
+-- Вешаем на 2 скилл активацию звука и повторение ударов
+local UserInputService = game:GetService("UserInputService")
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == Enum.KeyCode.Two then
+        playORA()
+        for _ = 1, 5 do
+            local anim = Instance.new("Animation")
+            anim.AnimationId = "rbxassetid://14884041959"
+            local track = humanoid:LoadAnimation(anim)
+            track:Play()
+            wait(0.15)
+        end
+    end
+end)
+
+print("[JoJo Moveset] Скрипт активирован!")
