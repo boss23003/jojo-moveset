@@ -1,11 +1,5 @@
--- [JoJo Moveset] Полностью рабочая версия со всеми публичными анимациями
-
--- Удаляем стандартные анимации и музыку
-for _,v in pairs(game:GetDescendants()) do
-    if v:IsA("Animation") or (v:IsA("Sound") and v.Parent.Name == "Music") then
-        v:Destroy()
-    end
-end
+-- JoJo-стиль кастомизация для персонажа Сайтама в The Strongest Battlegrounds
+-- Авторский скрипт под loadstring
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -16,17 +10,37 @@ local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
 local humanoid = character:WaitForChild("Humanoid")
 
--- === СТЕНД ===
+-- Функция для поиска существующих анимаций в игре
+local function findAnimation(name)
+    for _, v in pairs(game:GetDescendants()) do
+        if v:IsA("Animation") and v.Name == name then
+            return v.AnimationId
+        end
+    end
+    return nil
+end
+
+-- Анимации скиллов
+local skills = {
+    [1] = findAnimation("Punch") or "rbxassetid://507771019",   -- Удар рукой вперед
+    [2] = findAnimation("RapidPunches") or "rbxassetid://10921154034", -- Быстрые удары (ORA ORA)
+    [3] = findAnimation("Kick") or "rbxassetid://507767968",   -- Толчок ногой
+    [4] = findAnimation("Uppercut") or "rbxassetid://10921099718", -- Удар ногой вверх
+}
+
+-- Создание стенда
 local stand = character:Clone()
 stand.Name = "Stand"
 
-for _,v in pairs(stand:GetDescendants()) do
+-- Удаление ненужных объектов из стенда
+for _, v in pairs(stand:GetDescendants()) do
     if v:IsA("Tool") or v:IsA("Script") or v:IsA("LocalScript") then
         v:Destroy()
     end
 end
 
-for _,v in pairs(stand:GetDescendants()) do
+-- Настройка внешнего вида стенда
+for _, v in pairs(stand:GetDescendants()) do
     if v:IsA("BasePart") then
         v.Transparency = 0.5
         v.CanCollide = false
@@ -36,42 +50,39 @@ for _,v in pairs(stand:GetDescendants()) do
 end
 
 local standHumanoid = stand:FindFirstChildWhichIsA("Humanoid")
+
+-- Применение боевой позы из эмоций
+local poseAnim = findAnimation("BattlePose") or "rbxassetid://507766388"
 local pose = Instance.new("Animation")
-pose.AnimationId = "rbxassetid://507766388"
+pose.AnimationId = poseAnim
 local poseTrack = standHumanoid:LoadAnimation(pose)
 poseTrack.Looped = true
 poseTrack:Play()
 
 stand.Parent = workspace
 
+-- Синхронизация позиции стенда с персонажем
 RunService.RenderStepped:Connect(function()
     if character and character:FindFirstChild("HumanoidRootPart") then
-        stand:PivotTo(character.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3 + math.sin(tick()*2)*0.5))
+        stand:PivotTo(character.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3 + math.sin(tick() * 2) * 0.5))
     end
 end)
 
--- === АНИМАЦИИ СКИЛЛОВ (рабочие публичные) ===
-local skills = {
-    [1] = "rbxassetid://507771019",   -- удар рукой вперёд
-    [2] = "rbxassetid://10921154034", -- ORA ORA (быстрые удары)
-    [3] = "rbxassetid://507767968",   -- толчок ногой
-    [4] = "rbxassetid://10921099718", -- оперкот ногой
-}
-
+-- Функция для воспроизведения анимации скилла
 local function playSkill(skillIndex)
     local anim = Instance.new("Animation")
     anim.AnimationId = skills[skillIndex]
     local track = humanoid:LoadAnimation(anim)
     track:Play()
 
-    -- Стенд повторяет
+    -- Стенд повторяет анимацию
     local standAnim = Instance.new("Animation")
     standAnim.AnimationId = skills[skillIndex]
     local standTrack = standHumanoid:LoadAnimation(standAnim)
     standTrack:Play()
 end
 
--- Звук ORA
+-- Функция для воспроизведения звука ORA
 local function playORA()
     local sound = Instance.new("Sound", character)
     sound.SoundId = "rbxassetid://1093100474"
@@ -80,7 +91,7 @@ local function playORA()
     Debris:AddItem(sound, 3)
 end
 
--- Управление
+-- Обработка ввода пользователя для активации скиллов
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
     if input.KeyCode == Enum.KeyCode.One then
@@ -98,4 +109,4 @@ UserInputService.InputBegan:Connect(function(input, gpe)
     end
 end)
 
-print("[JoJo Moveset] Готово! Ora ora!")
+print("[JoJo Moveset] Скрипт активирован!")
