@@ -1,5 +1,5 @@
 -- CRYSTALCHEAT - Advanced Roblox Cheat GUI
--- Fixed version with working tabs and improved flight
+-- Optimized version with smooth fly and notifications
 
 -- Services
 local Players = game:GetService("Players")
@@ -18,11 +18,22 @@ local Humanoid = Character:WaitForChild("Humanoid")
 local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
 
 -- Constants
-local CRYSTAL_VERSION = "1.1"
+local CRYSTAL_VERSION = "1.3"
 local DEFAULT_SPEED = 16
 local DEFAULT_JUMP = 50
 local DEFAULT_FLY_SPEED = 50
 local KEYBIND_NONE = "None"
+local FLY_SMOOTHNESS = 0.2 -- Меньшее значение = более плавный полёт (0.1-0.3 оптимально)
+local FLY_DAMPING = 0.85 -- Коэффициент затухания для плавности (0.8-0.95 оптимально)
+
+-- Original values storage
+local OriginalValues = {
+    WalkSpeed = DEFAULT_SPEED,
+    JumpPower = DEFAULT_JUMP,
+    Brightness = Lighting.Brightness,
+    Ambient = Lighting.Ambient,
+    OutdoorAmbient = Lighting.OutdoorAmbient
+}
 
 -- State
 local Settings = {
@@ -37,18 +48,18 @@ local Settings = {
     NoFall = {Enabled = false, Keybind = KEYBIND_NONE}
 }
 
+-- UI State
 local ActiveTab = "Movement"
 local IsDragging = false
 local DragOffset = Vector2.new(0, 0)
 local IsMinimized = false
+
+-- Feature variables
 local FlyPart = nil
 local FlyConnection = nil
 local NoclipConnection = nil
 local ESPObjects = {}
 local XrayTransparency = 0.6
-local OriginalBrightness = Lighting.Brightness
-local OriginalAmbient = Lighting.Ambient
-local OriginalOutdoorAmbient = Lighting.OutdoorAmbient
 local FlyKeys = {
     W = false,
     A = false,
@@ -57,6 +68,29 @@ local FlyKeys = {
     Space = false,
     LeftShift = false
 }
+
+-- Smooth fly variables
+local FlyVelocity = Vector3.new(0, 0, 0)
+local TargetFlyVelocity = Vector3.new(0, 0, 0)
+
+-- Connections storage for cleanup
+local Connections = {}
+
+-- Function to store and disconnect connections
+local function AddConnection(connection)
+    table.insert(Connections, connection)
+    return connection
+end
+
+-- Function to clean up all connections
+local function CleanupConnections()
+    for _, connection in ipairs(Connections) do
+        if connection.Connected then
+            connection:Disconnect()
+        end
+    end
+    Connections = {}
+end
 
 -- Utility Functions
 local function CreateInstance(className, properties)
@@ -116,6 +150,564 @@ local function CreateStroke(parent, color, thickness)
     return stroke
 end
 
+-- Notification System
+local NotificationSystem = {}
+local NotificationsFrame
+
+function NotificationSystem.Init(parent)
+    NotificationsFrame = CreateInstance("Frame", {
+        Name = "NotificationsFrame",
+        Size = UDim2.new(0, 250, 1, 0),
+        Position = UDim2.new(1, -260, 0, 0),
+        BackgroundTransparency = 1,
+        Parent = parent
+    })
+end
+
+function NotificationSystem.Show(title, message, color, duration)
+    duration = duration or 3
+    color = color or Color3.fromRGB(60, 120, 255)
+    
+    -- Create notification frame
+    local notifFrame = CreateRoundedFrame({
+        Name = "Notification_" .. os.time(),
+        Size = UDim2.new(1, -10, 0, 60),
+        Position = UDim2.new(0, 5, 1, 10), -- Start below screen
+        BackgroundColor3 = Color3.fromRGB(30, 30, 30),
+        Parent = NotificationsFrame
+    })
+    
+    ApplyShadow(notifFrame, 5)
+    ApplyGradient(notifFrame, Color3.fromRGB(40, 40, 40), Color3.fromRGB(25, 25, 25))
+    
+    -- Add colored indicator
+    local indicator = CreateRoundedFrame({
+        Name = "Indicator",
+        Size = UDim2.new(0, 4, 1, -10),
+        Position = UDim2.new(0, 5, 0, 5),
+        BackgroundColor3 = color,
+        Parent = notifFrame
+    })
+    
+    -- Add title
+    local titleLabel = CreateInstance("TextLabel", {
+        Name = "Title",
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, -20, 0, 20),
+        Position = UDim2.new(0, 15, 0, 5),
+        Text = title,
+        TextColor3 = color,
+        TextSize = 16,
+        Font = Enum.Font.GothamBold,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Parent = notifFrame
+    })
+    
+    -- Add message
+    local messageLabel = CreateInstance("TextLabel", {
+        Name = "Message",
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, -20, 0, 20),
+        Position = UDim2.new(0, 15, 0, 30),
+        Text = message,
+        TextColor3 = Color3.fromRGB(255, 255, 255),
+        TextSize = 14,
+        Font = Enum.Font.Gotham,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Parent = notifFrame
+    })
+    
+    -- Reposition existing notifications
+    local existingNotifs = {}
+    for _, child in pairs(NotificationsFrame:GetChildren()) do
+        if child:IsA("Frame") and child ~= notifFrame then
+            table.insert(existingNotifs, child)
+        end
+    end
+    
+    for i, notif in ipairs(existingNotifs) do
+        TweenService:Create(notif, TweenInfo.new(0.3), {
+            Position = UDim2.new(0, 5, 1, -70 * i - 60)
+        }):Play()
+    end
+    
+    -- Animate in
+    TweenService:Create(notifFrame, TweenInfo.new(0.5, Enum.EasingStyle.Quint), {
+        Position = UDim2.new(0, 5, 1, -60)
+    }):Play()
+    
+    -- Auto remove after duration
+    spawn(function()
+        wait(duration)
+        
+        -- Animate out
+        TweenService:Create(notifFrame, TweenInfo.new(0.5, Enum.EasingStyle.Quint), {
+            Position = UDim2.new(1, 10, 1, -60)
+        }):Play()
+        
+        wait(0.6)
+        notifFrame:Destroy()
+    end)
+    
+    return notifFrame
+end
+
+-- Feature Functions
+local function HandleFlyInput(input, isPressed)
+    if input.KeyCode == Enum.KeyCode.W then
+        FlyKeys.W = isPressed
+    elseif input.KeyCode == Enum.KeyCode.A then
+        FlyKeys.A = isPressed
+    elseif input.KeyCode == Enum.KeyCode.S then
+        FlyKeys.S = isPressed
+    elseif input.KeyCode == Enum.KeyCode.D then
+        FlyKeys.D = isPressed
+    elseif input.KeyCode == Enum.KeyCode.Space then
+        FlyKeys.Space = isPressed
+    elseif input.KeyCode == Enum.KeyCode.LeftShift then
+        FlyKeys.LeftShift = isPressed
+    end
+end
+
+local function ToggleFly(enabled)
+    Settings.Fly.Enabled = enabled
+    
+    if enabled then
+        -- Create fly part if needed
+        if not FlyPart then
+            FlyPart = Instance.new("Part")
+            FlyPart.Name = "FlyPart"
+            FlyPart.Size = Vector3.new(1, 1, 1)
+            FlyPart.Transparency = 1
+            FlyPart.CanCollide = false
+            FlyPart.Anchored = true
+            FlyPart.Parent = workspace
+        end
+        
+        -- Reset fly velocities
+        FlyVelocity = Vector3.new(0, 0, 0)
+        TargetFlyVelocity = Vector3.new(0, 0, 0)
+        
+        -- Position fly part at character
+        local character = LocalPlayer.Character
+        if character and character:FindFirstChild("HumanoidRootPart") then
+            FlyPart.CFrame = character.HumanoidRootPart.CFrame
+            
+            -- Connect input events for flying
+            local flyInputBeganConnection = AddConnection(UserInputService.InputBegan:Connect(function(input, gameProcessed)
+                if not gameProcessed then
+                    HandleFlyInput(input, true)
+                end
+            end))
+            
+            local flyInputEndedConnection = AddConnection(UserInputService.InputEnded:Connect(function(input, gameProcessed)
+                if not gameProcessed then
+                    HandleFlyInput(input, false)
+                end
+            end))
+            
+            -- Connect fly update loop
+            if FlyConnection then FlyConnection:Disconnect() end
+            
+            FlyConnection = AddConnection(RunService.RenderStepped:Connect(function(deltaTime)
+                if not Settings.Fly.Enabled then return end
+                
+                -- Check if character still exists
+                if not character or not character.Parent or not character:FindFirstChild("HumanoidRootPart") then
+                    ToggleFly(false)
+                    return
+                end
+                
+                -- Calculate target velocity based on input
+                local targetVelocity = Vector3.new(0, 0, 0)
+                
+                -- Forward/backward movement based on camera direction
+                if FlyKeys.W then
+                    targetVelocity = targetVelocity + Camera.CFrame.LookVector
+                end
+                if FlyKeys.S then
+                    targetVelocity = targetVelocity - Camera.CFrame.LookVector
+                end
+                
+                -- Left/right movement based on camera right vector
+                if FlyKeys.A then
+                    targetVelocity = targetVelocity - Camera.CFrame.RightVector
+                end
+                if FlyKeys.D then
+                    targetVelocity = targetVelocity + Camera.CFrame.RightVector
+                end
+                
+                -- Up/down movement
+                if FlyKeys.Space then
+                    targetVelocity = targetVelocity + Vector3.new(0, 1, 0)
+                end
+                if FlyKeys.LeftShift then
+                    targetVelocity = targetVelocity - Vector3.new(0, 1, 0)
+                end
+                
+                -- Normalize and apply speed
+                if targetVelocity.Magnitude > 0 then
+                    targetVelocity = targetVelocity.Unit * (Settings.Fly.Speed / 10)
+                end
+                
+                -- Set target velocity
+                TargetFlyVelocity = targetVelocity
+                
+                -- Smoothly interpolate current velocity towards target velocity
+                FlyVelocity = FlyVelocity:Lerp(TargetFlyVelocity, FLY_SMOOTHNESS)
+                
+                -- Apply damping when no keys are pressed
+                if TargetFlyVelocity.Magnitude == 0 then
+                    FlyVelocity = FlyVelocity * FLY_DAMPING
+                end
+                
+                -- Update fly part position
+                FlyPart.CFrame = FlyPart.CFrame + FlyVelocity
+                
+                -- Make character follow fly part with smooth interpolation
+                local targetCFrame = CFrame.new(FlyPart.Position)
+                character.HumanoidRootPart.CFrame = character.HumanoidRootPart.CFrame:Lerp(targetCFrame, 0.2)
+                character.HumanoidRootPart.Velocity = Vector3.new(0, 0, 0)
+            end))
+        end
+        
+        NotificationSystem.Show("Fly", "Плавный полёт включен", Color3.fromRGB(0, 255, 0))
+    else
+        -- Clean up fly resources
+        if FlyConnection then
+            FlyConnection:Disconnect()
+            FlyConnection = nil
+        end
+        
+        if FlyPart then
+            FlyPart:Destroy()
+            FlyPart = nil
+        end
+        
+        -- Reset fly keys
+        for key in pairs(FlyKeys) do
+            FlyKeys[key] = false
+        end
+        
+        -- Reset velocities
+        FlyVelocity = Vector3.new(0, 0, 0)
+        TargetFlyVelocity = Vector3.new(0, 0, 0)
+        
+        NotificationSystem.Show("Fly", "Полёт отключен", Color3.fromRGB(255, 0, 0))
+    end
+end
+
+local function UpdateFlySpeed(value)
+    Settings.Fly.Speed = value
+    NotificationSystem.Show("Fly Speed", "Установлена скорость: " .. value, Color3.fromRGB(0, 200, 255))
+end
+
+local function ToggleSpeed(enabled)
+    Settings.Speed.Enabled = enabled
+    
+    if enabled then
+        -- Set character speed
+        pcall(function()
+            LocalPlayer.Character.Humanoid.WalkSpeed = Settings.Speed.Value
+        end)
+        NotificationSystem.Show("Speed", "Скорость включена: " .. Settings.Speed.Value, Color3.fromRGB(0, 255, 0))
+    else
+        -- Reset character speed
+        pcall(function()
+            LocalPlayer.Character.Humanoid.WalkSpeed = OriginalValues.WalkSpeed
+        end)
+        NotificationSystem.Show("Speed", "Скорость отключена", Color3.fromRGB(255, 0, 0))
+    end
+end
+
+local function UpdateSpeed(value)
+    Settings.Speed.Value = value
+    
+    if Settings.Speed.Enabled then
+        pcall(function()
+            LocalPlayer.Character.Humanoid.WalkSpeed = value
+        end)
+        NotificationSystem.Show("Speed", "Установлена скорость: " .. value, Color3.fromRGB(0, 200, 255))
+    end
+end
+
+local function ToggleNoclip(enabled)
+    Settings.Noclip.Enabled = enabled
+    
+    if enabled then
+        if NoclipConnection then NoclipConnection:Disconnect() end
+        
+        NoclipConnection = AddConnection(RunService.Stepped:Connect(function()
+            if not LocalPlayer.Character then return end
+            
+            for _, part in pairs(LocalPlayer.Character:GetDescendants()) do
+                if part:IsA("BasePart") and part.CanCollide then
+                    part.CanCollide = false
+                end
+            end
+        end))
+        
+        NotificationSystem.Show("Noclip", "Noclip включен", Color3.fromRGB(0, 255, 0))
+    else
+        if NoclipConnection then
+            NoclipConnection:Disconnect()
+            NoclipConnection = nil
+        end
+        
+        -- Reset collision
+        for _, part in pairs(LocalPlayer.Character:GetDescendants()) do
+            if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                part.CanCollide = true
+            end
+        end
+        
+        NotificationSystem.Show("Noclip", "Noclip отключен", Color3.fromRGB(255, 0, 0))
+    end
+end
+
+local function CreateESPBox(player)
+    if player == LocalPlayer then return end
+    
+    local character = player.Character
+    if not character then return end
+    
+    -- Create ESP components
+    local espFolder = Instance.new("Folder")
+    espFolder.Name = "ESP_" .. player.Name
+    espFolder.Parent = CoreGui
+    
+    -- Box
+    local boxPart = Instance.new("BoxHandleAdornment")
+    boxPart.Name = "Box"
+    boxPart.Size = Vector3.new(4, 5, 1)
+    boxPart.Color3 = Color3.fromRGB(255, 0, 0)
+    boxPart.Transparency = 0.7
+    boxPart.AlwaysOnTop = true
+    boxPart.ZIndex = 10
+    boxPart.Adornee = character:FindFirstChild("HumanoidRootPart")
+    boxPart.Parent = espFolder
+    
+    -- Name label
+    local billboardGui = Instance.new("BillboardGui")
+    billboardGui.Name = "NameTag"
+    billboardGui.Size = UDim2.new(0, 200, 0, 50)
+    billboardGui.StudsOffset = Vector3.new(0, 3, 0)
+    billboardGui.AlwaysOnTop = true
+    billboardGui.Adornee = character:FindFirstChild("Head")
+    billboardGui.Parent = espFolder
+    
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.Name = "NameLabel"
+    nameLabel.Size = UDim2.new(1, 0, 0, 20)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.Text = player.Name
+    nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    nameLabel.TextStrokeTransparency = 0.5
+    nameLabel.TextSize = 14
+    nameLabel.Font = Enum.Font.GothamBold
+    nameLabel.Parent = billboardGui
+    
+    -- Health bar
+    local healthBar = Instance.new("Frame")
+    healthBar.Name = "HealthBar"
+    healthBar.Size = UDim2.new(1, 0, 0, 5)
+    healthBar.Position = UDim2.new(0, 0, 0, 20)
+    healthBar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    healthBar.BorderSizePixel = 0
+    healthBar.Parent = billboardGui
+    
+    local healthFill = Instance.new("Frame")
+    healthFill.Name = "HealthFill"
+    healthFill.Size = UDim2.new(1, 0, 1, 0)
+    healthFill.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
+    healthFill.BorderSizePixel = 0
+    healthFill.Parent = healthBar
+    
+    -- Update health bar
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        local function updateHealth()
+            healthFill.Size = UDim2.new(humanoid.Health / humanoid.MaxHealth, 0, 1, 0)
+            
+            -- Change color based on health
+            local healthRatio = humanoid.Health / humanoid.MaxHealth
+            if healthRatio > 0.5 then
+                healthFill.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
+            elseif healthRatio > 0.2 then
+                healthFill.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
+            else
+                healthFill.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+            end
+        end
+        
+        updateHealth()
+        AddConnection(humanoid.HealthChanged:Connect(updateHealth))
+    end
+    
+    -- Store ESP objects
+    ESPObjects[player.Name] = espFolder
+    
+    -- Clean up when character is removed
+    AddConnection(character.AncestryChanged:Connect(function(_, parent)
+        if not parent and ESPObjects[player.Name] then
+            ESPObjects[player.Name]:Destroy()
+            ESPObjects[player.Name] = nil
+        end
+    end))
+    
+    -- Clean up when player leaves
+    AddConnection(player.AncestryChanged:Connect(function(_, parent)
+        if not parent and ESPObjects[player.Name] then
+            ESPObjects[player.Name]:Destroy()
+            ESPObjects[player.Name] = nil
+        end
+    end))
+end
+
+local function ToggleESP(enabled)
+    Settings.ESP.Enabled = enabled
+    
+    if enabled then
+        -- Create ESP for existing players
+        for _, player in pairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                CreateESPBox(player)
+            end
+        end
+        
+        -- Connect player added event
+        AddConnection(Players.PlayerAdded:Connect(function(player)
+            if Settings.ESP.Enabled then
+                player.CharacterAdded:Connect(function(character)
+                    if Settings.ESP.Enabled then
+                        CreateESPBox(player)
+                    end
+                end)
+                
+                if player.Character then
+                    CreateESPBox(player)
+                end
+            end
+        end))
+        
+        NotificationSystem.Show("ESP", "ESP включен", Color3.fromRGB(0, 255, 0))
+    else
+        -- Remove all ESP objects
+        for _, espObject in pairs(ESPObjects) do
+            espObject:Destroy()
+        end
+        
+        ESPObjects = {}
+        NotificationSystem.Show("ESP", "ESP отключен", Color3.fromRGB(255, 0, 0))
+    end
+end
+
+local function ToggleInfJump(enabled)
+    Settings.InfJump.Enabled = enabled
+    
+    if enabled then
+        AddConnection(UserInputService.JumpRequest:Connect(function()
+            if Settings.InfJump.Enabled then
+                LocalPlayer.Character:FindFirstChildOfClass("Humanoid"):ChangeState(Enum.HumanoidStateType.Jumping)
+            end
+        end))
+        
+        NotificationSystem.Show("Infinite Jump", "Бесконечные прыжки включены", Color3.fromRGB(0, 255, 0))
+    else
+        NotificationSystem.Show("Infinite Jump", "Бесконечные прыжки отключены", Color3.fromRGB(255, 0, 0))
+    end
+end
+
+local function ToggleTeleport(enabled)
+    Settings.Teleport.Enabled = enabled
+    
+    if enabled then
+        AddConnection(Mouse.Button1Down:Connect(function()
+            if Settings.Teleport.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+                local character = LocalPlayer.Character
+                if character and character:FindFirstChild("HumanoidRootPart") then
+                    character.HumanoidRootPart.CFrame = CFrame.new(Mouse.Hit.Position + Vector3.new(0, 3, 0))
+                    NotificationSystem.Show("Teleport", "Телепортация выполнена", Color3.fromRGB(0, 200, 255))
+                end
+            end
+        end))
+        
+        NotificationSystem.Show("Teleport", "Телепортация включена (CTRL + Click)", Color3.fromRGB(0, 255, 0))
+    else
+        NotificationSystem.Show("Teleport", "Телепортация отключена", Color3.fromRGB(255, 0, 0))
+    end
+end
+
+local function ToggleXray(enabled)
+    Settings.Xray.Enabled = enabled
+    
+    if enabled then
+        -- Make all parts semi-transparent
+        for _, part in pairs(workspace:GetDescendants()) do
+            if part:IsA("BasePart") and not part:IsDescendantOf(LocalPlayer.Character) and not part.Name == "Terrain" then
+                if not part:GetAttribute("OriginalTransparency") then
+                    part:SetAttribute("OriginalTransparency", part.Transparency)
+                end
+                part.Transparency = math.max(part.Transparency, XrayTransparency)
+            end
+        end
+        
+        NotificationSystem.Show("X-Ray", "X-Ray включен", Color3.fromRGB(0, 255, 0))
+    else
+        -- Restore original transparency
+        for _, part in pairs(workspace:GetDescendants()) do
+            if part:IsA("BasePart") and part:GetAttribute("OriginalTransparency") then
+                part.Transparency = part:GetAttribute("OriginalTransparency")
+            end
+        end
+        
+        NotificationSystem.Show("X-Ray", "X-Ray отключен", Color3.fromRGB(255, 0, 0))
+    end
+end
+
+local function ToggleFullBright(enabled)
+    Settings.FullBright.Enabled = enabled
+    
+    if enabled then
+        -- Store original lighting settings
+        OriginalValues.Brightness = Lighting.Brightness
+        OriginalValues.Ambient = Lighting.Ambient
+        OriginalValues.OutdoorAmbient = Lighting.OutdoorAmbient
+        
+        -- Apply full brightness
+        Lighting.Brightness = 2
+        Lighting.Ambient = Color3.fromRGB(255, 255, 255)
+        Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+        
+        NotificationSystem.Show("FullBright", "FullBright включен", Color3.fromRGB(0, 255, 0))
+    else
+        -- Restore original lighting
+        Lighting.Brightness = OriginalValues.Brightness
+        Lighting.Ambient = OriginalValues.Ambient
+        Lighting.OutdoorAmbient = OriginalValues.OutdoorAmbient
+        
+        NotificationSystem.Show("FullBright", "FullBright отключен", Color3.fromRGB(255, 0, 0))
+    end
+end
+
+local function ToggleNoFall(enabled)
+    Settings.NoFall.Enabled = enabled
+    
+    if enabled then
+        -- Connect to the character to prevent fall damage
+        AddConnection(LocalPlayer.Character.ChildAdded:Connect(function(child)
+            if Settings.NoFall.Enabled and child.Name == "FallDamageScript" then
+                child:Destroy()
+            end
+        end))
+        
+        NotificationSystem.Show("No Fall Damage", "Защита от падения включена", Color3.fromRGB(0, 255, 0))
+    else
+        NotificationSystem.Show("No Fall Damage", "Защита от падения отключена", Color3.fromRGB(255, 0, 0))
+    end
+end
+
+-- UI Components
 local function CreateCheckbox(parent, position, text, initialState, callback)
     local container = CreateInstance("Frame", {
         Name = text .. "Container",
@@ -218,7 +810,7 @@ local function CreateCheckbox(parent, position, text, initialState, callback)
         keybindText.Text = "..."
     end)
     
-    UserInputService.InputBegan:Connect(function(input)
+    AddConnection(UserInputService.InputBegan:Connect(function(input)
         if isSettingKeybind then
             if input.UserInputType == Enum.UserInputType.Keyboard then
                 local keyName = input.KeyCode.Name
@@ -245,9 +837,11 @@ local function CreateCheckbox(parent, position, text, initialState, callback)
                 elseif text == "No Fall Damage" then
                     Settings.NoFall.Keybind = keyName
                 end
+                
+                NotificationSystem.Show("Keybind", text .. " keybind set to " .. keyName, Color3.fromRGB(0, 200, 255))
             end
         end
-    end)
+    end))
     
     return {
         Container = container,
@@ -348,17 +942,17 @@ local function CreateSlider(parent, position, text, min, max, initialValue, call
         updateSlider({Position = Vector2.new(x, y)})
     end)
     
-    UserInputService.InputEnded:Connect(function(input)
+    AddConnection(UserInputService.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             isDragging = false
         end
-    end)
+    end))
     
-    UserInputService.InputChanged:Connect(function(input)
+    AddConnection(UserInputService.InputChanged:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseMovement and isDragging then
             updateSlider(input)
         end
-    end)
+    end))
     
     return {
         Container = container,
@@ -457,417 +1051,6 @@ local function CreateTabButton(parent, position, text, isActive, callback)
     return button
 end
 
--- Feature Functions
-local function HandleFlyInput(input, isPressed)
-    if input.KeyCode == Enum.KeyCode.W then
-        FlyKeys.W = isPressed
-    elseif input.KeyCode == Enum.KeyCode.A then
-        FlyKeys.A = isPressed
-    elseif input.KeyCode == Enum.KeyCode.S then
-        FlyKeys.S = isPressed
-    elseif input.KeyCode == Enum.KeyCode.D then
-        FlyKeys.D = isPressed
-    elseif input.KeyCode == Enum.KeyCode.Space then
-        FlyKeys.Space = isPressed
-    elseif input.KeyCode == Enum.KeyCode.LeftShift then
-        FlyKeys.LeftShift = isPressed
-    end
-end
-
-local function ToggleFly(enabled)
-    Settings.Fly.Enabled = enabled
-    
-    if enabled then
-        -- Create fly part if needed
-        if not FlyPart then
-            FlyPart = Instance.new("Part")
-            FlyPart.Name = "FlyPart"
-            FlyPart.Size = Vector3.new(1, 1, 1)
-            FlyPart.Transparency = 1
-            FlyPart.CanCollide = false
-            FlyPart.Anchored = true
-            FlyPart.Parent = workspace
-        end
-        
-        -- Position fly part at character
-        local character = LocalPlayer.Character
-        if character and character:FindFirstChild("HumanoidRootPart") then
-            FlyPart.CFrame = character.HumanoidRootPart.CFrame
-            
-            -- Connect input events for flying
-            local flyInputBeganConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
-                if not gameProcessed then
-                    HandleFlyInput(input, true)
-                end
-            end)
-            
-            local flyInputEndedConnection = UserInputService.InputEnded:Connect(function(input, gameProcessed)
-                if not gameProcessed then
-                    HandleFlyInput(input, false)
-                end
-            end)
-            
-            -- Connect fly update loop
-            if FlyConnection then FlyConnection:Disconnect() end
-            
-            FlyConnection = RunService.RenderStepped:Connect(function()
-                if not Settings.Fly.Enabled then return end
-                
-                -- Check if character still exists
-                if not character or not character.Parent or not character:FindFirstChild("HumanoidRootPart") then
-                    ToggleFly(false)
-                    return
-                end
-                
-                -- Calculate move direction
-                local moveDirection = Vector3.new(0, 0, 0)
-                
-                -- Forward/backward movement based on camera direction
-                if FlyKeys.W then
-                    moveDirection = moveDirection + Camera.CFrame.LookVector
-                end
-                if FlyKeys.S then
-                    moveDirection = moveDirection - Camera.CFrame.LookVector
-                end
-                
-                -- Left/right movement based on camera right vector
-                if FlyKeys.A then
-                    moveDirection = moveDirection - Camera.CFrame.RightVector
-                end
-                if FlyKeys.D then
-                    moveDirection = moveDirection + Camera.CFrame.RightVector
-                end
-                
-                -- Up/down movement
-                if FlyKeys.Space then
-                    moveDirection = moveDirection + Vector3.new(0, 1, 0)
-                end
-                if FlyKeys.LeftShift then
-                    moveDirection = moveDirection - Vector3.new(0, 1, 0)
-                end
-                
-                -- Normalize and apply speed
-                if moveDirection.Magnitude > 0 then
-                    moveDirection = moveDirection.Unit * (Settings.Fly.Speed / 10)
-                end
-                
-                -- Update fly part position
-                FlyPart.CFrame = FlyPart.CFrame + moveDirection
-                
-                -- Make character follow fly part
-                character.HumanoidRootPart.CFrame = CFrame.new(FlyPart.Position)
-                character.HumanoidRootPart.Velocity = Vector3.new(0, 0, 0)
-            end)
-            
-            -- Store connections for cleanup
-            FlyConnection.InputBeganConnection = flyInputBeganConnection
-            FlyConnection.InputEndedConnection = flyInputEndedConnection
-        end
-    else
-        -- Clean up fly resources
-        if FlyConnection then
-            if FlyConnection.InputBeganConnection then
-                FlyConnection.InputBeganConnection:Disconnect()
-            end
-            
-            if FlyConnection.InputEndedConnection then
-                FlyConnection.InputEndedConnection:Disconnect()
-            end
-            
-            FlyConnection:Disconnect()
-            FlyConnection = nil
-        end
-        
-        if FlyPart then
-            FlyPart:Destroy()
-            FlyPart = nil
-        end
-        
-        -- Reset fly keys
-        for key in pairs(FlyKeys) do
-            FlyKeys[key] = false
-        end
-    end
-end
-
-local function UpdateFlySpeed(value)
-    Settings.Fly.Speed = value
-end
-
-local function ToggleSpeed(enabled)
-    Settings.Speed.Enabled = enabled
-    
-    if enabled then
-        -- Set character speed
-        pcall(function()
-            LocalPlayer.Character.Humanoid.WalkSpeed = Settings.Speed.Value
-        end)
-    else
-        -- Reset character speed
-        pcall(function()
-            LocalPlayer.Character.Humanoid.WalkSpeed = DEFAULT_SPEED
-        end)
-    end
-end
-
-local function UpdateSpeed(value)
-    Settings.Speed.Value = value
-    
-    if Settings.Speed.Enabled then
-        pcall(function()
-            LocalPlayer.Character.Humanoid.WalkSpeed = value
-        end)
-    end
-end
-
-local function ToggleNoclip(enabled)
-    Settings.Noclip.Enabled = enabled
-    
-    if enabled then
-        if NoclipConnection then NoclipConnection:Disconnect() end
-        
-        NoclipConnection = RunService.Stepped:Connect(function()
-            if not LocalPlayer.Character then return end
-            
-            for _, part in pairs(LocalPlayer.Character:GetDescendants()) do
-                if part:IsA("BasePart") and part.CanCollide then
-                    part.CanCollide = false
-                end
-            end
-        end)
-    else
-        if NoclipConnection then
-            NoclipConnection:Disconnect()
-            NoclipConnection = nil
-        end
-        
-        -- Reset collision
-        for _, part in pairs(LocalPlayer.Character:GetDescendants()) do
-            if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-                part.CanCollide = true
-            end
-        end
-    end
-end
-
-local function CreateESPBox(player)
-    if player == LocalPlayer then return end
-    
-    local character = player.Character
-    if not character then return end
-    
-    -- Create ESP components
-    local espFolder = Instance.new("Folder")
-    espFolder.Name = "ESP_" .. player.Name
-    espFolder.Parent = CoreGui
-    
-    -- Box
-    local boxPart = Instance.new("BoxHandleAdornment")
-    boxPart.Name = "Box"
-    boxPart.Size = Vector3.new(4, 5, 1)
-    boxPart.Color3 = Color3.fromRGB(255, 0, 0)
-    boxPart.Transparency = 0.7
-    boxPart.AlwaysOnTop = true
-    boxPart.ZIndex = 10
-    boxPart.Adornee = character:FindFirstChild("HumanoidRootPart")
-    boxPart.Parent = espFolder
-    
-    -- Name label
-    local billboardGui = Instance.new("BillboardGui")
-    billboardGui.Name = "NameTag"
-    billboardGui.Size = UDim2.new(0, 200, 0, 50)
-    billboardGui.StudsOffset = Vector3.new(0, 3, 0)
-    billboardGui.AlwaysOnTop = true
-    billboardGui.Adornee = character:FindFirstChild("Head")
-    billboardGui.Parent = espFolder
-    
-    local nameLabel = Instance.new("TextLabel")
-    nameLabel.Name = "NameLabel"
-    nameLabel.Size = UDim2.new(1, 0, 0, 20)
-    nameLabel.BackgroundTransparency = 1
-    nameLabel.Text = player.Name
-    nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    nameLabel.TextStrokeTransparency = 0.5
-    nameLabel.TextSize = 14
-    nameLabel.Font = Enum.Font.GothamBold
-    nameLabel.Parent = billboardGui
-    
-    -- Health bar
-    local healthBar = Instance.new("Frame")
-    healthBar.Name = "HealthBar"
-    healthBar.Size = UDim2.new(1, 0, 0, 5)
-    healthBar.Position = UDim2.new(0, 0, 0, 20)
-    healthBar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    healthBar.BorderSizePixel = 0
-    healthBar.Parent = billboardGui
-    
-    local healthFill = Instance.new("Frame")
-    healthFill.Name = "HealthFill"
-    healthFill.Size = UDim2.new(1, 0, 1, 0)
-    healthFill.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
-    healthFill.BorderSizePixel = 0
-    healthFill.Parent = healthBar
-    
-    -- Update health bar
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    if humanoid then
-        local function updateHealth()
-            healthFill.Size = UDim2.new(humanoid.Health / humanoid.MaxHealth, 0, 1, 0)
-            
-            -- Change color based on health
-            local healthRatio = humanoid.Health / humanoid.MaxHealth
-            if healthRatio > 0.5 then
-                healthFill.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
-            elseif healthRatio > 0.2 then
-                healthFill.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
-            else
-                healthFill.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
-            end
-        end
-        
-        updateHealth()
-        humanoid.HealthChanged:Connect(updateHealth)
-    end
-    
-    -- Store ESP objects
-    ESPObjects[player.Name] = espFolder
-    
-    -- Clean up when character is removed
-    character.AncestryChanged:Connect(function(_, parent)
-        if not parent and ESPObjects[player.Name] then
-            ESPObjects[player.Name]:Destroy()
-            ESPObjects[player.Name] = nil
-        end
-    end)
-    
-    -- Clean up when player leaves
-    player.AncestryChanged:Connect(function(_, parent)
-        if not parent and ESPObjects[player.Name] then
-            ESPObjects[player.Name]:Destroy()
-            ESPObjects[player.Name] = nil
-        end
-    end)
-end
-
-local function ToggleESP(enabled)
-    Settings.ESP.Enabled = enabled
-    
-    if enabled then
-        -- Create ESP for existing players
-        for _, player in pairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer then
-                CreateESPBox(player)
-            end
-        end
-        
-        -- Connect player added event
-        Players.PlayerAdded:Connect(function(player)
-            if Settings.ESP.Enabled then
-                player.CharacterAdded:Connect(function(character)
-                    if Settings.ESP.Enabled then
-                        CreateESPBox(player)
-                    end
-                end)
-                
-                if player.Character then
-                    CreateESPBox(player)
-                end
-            end
-        end)
-    else
-        -- Remove all ESP objects
-        for _, espObject in pairs(ESPObjects) do
-            espObject:Destroy()
-        end
-        
-        ESPObjects = {}
-    end
-end
-
-local function ToggleInfJump(enabled)
-    Settings.InfJump.Enabled = enabled
-    
-    if enabled then
-        UserInputService.JumpRequest:Connect(function()
-            if Settings.InfJump.Enabled then
-                LocalPlayer.Character:FindFirstChildOfClass("Humanoid"):ChangeState(Enum.HumanoidStateType.Jumping)
-            end
-        end)
-    end
-end
-
-local function ToggleTeleport(enabled)
-    Settings.Teleport.Enabled = enabled
-    
-    if enabled then
-        Mouse.Button1Down:Connect(function()
-            if Settings.Teleport.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
-                local character = LocalPlayer.Character
-                if character and character:FindFirstChild("HumanoidRootPart") then
-                    character.HumanoidRootPart.CFrame = CFrame.new(Mouse.Hit.Position + Vector3.new(0, 3, 0))
-                end
-            end
-        end)
-    end
-end
-
-local function ToggleXray(enabled)
-    Settings.Xray.Enabled = enabled
-    
-    if enabled then
-        -- Make all parts semi-transparent
-        for _, part in pairs(workspace:GetDescendants()) do
-            if part:IsA("BasePart") and not part:IsDescendantOf(LocalPlayer.Character) and not part.Name == "Terrain" then
-                if not part:GetAttribute("OriginalTransparency") then
-                    part:SetAttribute("OriginalTransparency", part.Transparency)
-                end
-                part.Transparency = math.max(part.Transparency, XrayTransparency)
-            end
-        end
-    else
-        -- Restore original transparency
-        for _, part in pairs(workspace:GetDescendants()) do
-            if part:IsA("BasePart") and part:GetAttribute("OriginalTransparency") then
-                part.Transparency = part:GetAttribute("OriginalTransparency")
-            end
-        end
-    end
-end
-
-local function ToggleFullBright(enabled)
-    Settings.FullBright.Enabled = enabled
-    
-    if enabled then
-        -- Store original lighting settings
-        OriginalBrightness = Lighting.Brightness
-        OriginalAmbient = Lighting.Ambient
-        OriginalOutdoorAmbient = Lighting.OutdoorAmbient
-        
-        -- Apply full brightness
-        Lighting.Brightness = 2
-        Lighting.Ambient = Color3.fromRGB(255, 255, 255)
-        Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
-    else
-        -- Restore original lighting
-        Lighting.Brightness = OriginalBrightness
-        Lighting.Ambient = OriginalAmbient
-        Lighting.OutdoorAmbient = OriginalOutdoorAmbient
-    end
-end
-
-local function ToggleNoFall(enabled)
-    Settings.NoFall.Enabled = enabled
-    
-    if enabled then
-        -- Connect to the character to prevent fall damage
-        LocalPlayer.Character.ChildAdded:Connect(function(child)
-            if Settings.NoFall.Enabled and child.Name == "FallDamageScript" then
-                child:Destroy()
-            end
-        end)
-    end
-end
-
 -- Create GUI
 local CrystalCheat = CreateInstance("ScreenGui", {
     Name = "CrystalCheat",
@@ -875,6 +1058,9 @@ local CrystalCheat = CreateInstance("ScreenGui", {
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
     Parent = CoreGui
 })
+
+-- Initialize notification system
+NotificationSystem.Init(CrystalCheat)
 
 -- Main Frame
 local MainFrame = CreateRoundedFrame({
@@ -1065,6 +1251,8 @@ local function UpdateTabs()
             end
         end
     end
+    
+    NotificationSystem.Show("Tab", "Switched to " .. ActiveTab .. " tab", Color3.fromRGB(0, 200, 255))
 end
 
 -- Tab Buttons
@@ -1175,6 +1363,8 @@ local ResetButton = CreateButton(SettingsContent, UDim2.new(0, 10, 0, 10), "Rese
     -- Reset speeds
     FlySpeedSlider.SetValue(DEFAULT_FLY_SPEED)
     SpeedSlider.SetValue(DEFAULT_SPEED)
+    
+    NotificationSystem.Show("Settings", "All settings reset to default", Color3.fromRGB(255, 150, 0))
 end)
 
 local VersionInfo = CreateInstance("TextLabel", {
@@ -1217,53 +1407,47 @@ TitleBar.InputEnded:Connect(function(input)
     end
 end)
 
-UserInputService.InputChanged:Connect(function(input)
+AddConnection(UserInputService.InputChanged:Connect(function(input)
     if IsDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
         MainFrame.Position = UDim2.new(0, DragOffset.X + input.Position.X, 0, DragOffset.Y + input.Position.Y)
     end
-end)
+end))
+
+-- Function to restore all settings
+local function RestoreAllSettings()
+    -- Disable all features
+    if Settings.Fly.Enabled then ToggleFly(false) end
+    if Settings.Speed.Enabled then ToggleSpeed(false) end
+    if Settings.Noclip.Enabled then ToggleNoclip(false) end
+    if Settings.ESP.Enabled then ToggleESP(false) end
+    if Settings.Xray.Enabled then ToggleXray(false) end
+    if Settings.FullBright.Enabled then ToggleFullBright(false) end
+    
+    -- Clean up all connections
+    CleanupConnections()
+    
+    -- Reset character properties
+    pcall(function()
+        LocalPlayer.Character.Humanoid.WalkSpeed = OriginalValues.WalkSpeed
+        LocalPlayer.Character.Humanoid.JumpPower = OriginalValues.JumpPower
+    end)
+    
+    -- Reset lighting
+    Lighting.Brightness = OriginalValues.Brightness
+    Lighting.Ambient = OriginalValues.Ambient
+    Lighting.OutdoorAmbient = OriginalValues.OutdoorAmbient
+    
+    -- Show notification
+    NotificationSystem.Show("CRYSTALCHEAT", "All settings restored", Color3.fromRGB(255, 150, 0))
+end
 
 -- Close button functionality
 CloseButton.MouseButton1Click:Connect(function()
+    -- Restore all settings
+    RestoreAllSettings()
+    
+    -- Destroy GUI
     CrystalCheat:Destroy()
-    
-    -- Clean up
-    if FlyConnection then 
-        if FlyConnection.InputBeganConnection then
-            FlyConnection.InputBeganConnection:Disconnect()
-        end
-        
-        if FlyConnection.InputEndedConnection then
-            FlyConnection.InputEndedConnection:Disconnect()
-        end
-        
-        FlyConnection:Disconnect() 
-    end
-    
-    if NoclipConnection then NoclipConnection:Disconnect() end
-    if FlyPart then FlyPart:Destroy() end
-    
-    -- Reset settings
-    pcall(function()
-        LocalPlayer.Character.Humanoid.WalkSpeed = DEFAULT_SPEED
-    end)
-    
-    -- Remove ESP
-    for _, espObject in pairs(ESPObjects) do
-        espObject:Destroy()
-    end
-    
-    -- Reset X-ray
-    for _, part in pairs(workspace:GetDescendants()) do
-        if part:IsA("BasePart") and part:GetAttribute("OriginalTransparency") then
-            part.Transparency = part:GetAttribute("OriginalTransparency")
-        end
-    end
-    
-    -- Reset lighting
-    Lighting.Brightness = OriginalBrightness
-    Lighting.Ambient = OriginalAmbient
-    Lighting.OutdoorAmbient = OriginalOutdoorAmbient
 end)
 
 -- Minimize button functionality
@@ -1284,7 +1468,7 @@ MinimizeButton.MouseButton1Click:Connect(function()
 end)
 
 -- Keybind handling
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
+AddConnection(UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     
     if input.UserInputType == Enum.UserInputType.Keyboard then
@@ -1321,20 +1505,25 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
             NoFallCheckbox.SetState(newState)
         end
     end
-end)
+end))
 
 -- Toggle GUI with Insert key
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
+AddConnection(UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if not gameProcessed and input.KeyCode == Enum.KeyCode.Insert then
         MainFrame.Visible = not MainFrame.Visible
+        NotificationSystem.Show("CRYSTALCHEAT", MainFrame.Visible and "GUI показан" or "GUI скрыт", Color3.fromRGB(0, 200, 255))
     end
-end)
+end))
 
 -- Character respawn handling
-LocalPlayer.CharacterAdded:Connect(function(character)
+AddConnection(LocalPlayer.CharacterAdded:Connect(function(character)
     Character = character
     Humanoid = character:WaitForChild("Humanoid")
     HumanoidRootPart = character:WaitForChild("HumanoidRootPart")
+    
+    -- Store original values
+    OriginalValues.WalkSpeed = Humanoid.WalkSpeed
+    OriginalValues.JumpPower = Humanoid.JumpPower
     
     -- Reapply settings
     if Settings.Speed.Enabled then
@@ -1352,55 +1541,18 @@ LocalPlayer.CharacterAdded:Connect(function(character)
         wait(1)
         ToggleNoclip(true)
     end
-end)
+    
+    NotificationSystem.Show("Character", "Персонаж возродился, настройки применены", Color3.fromRGB(0, 200, 255))
+end))
 
--- Notification
-local NotificationFrame = CreateRoundedFrame({
-    Name = "Notification",
-    Size = UDim2.new(0, 250, 0, 60),
-    Position = UDim2.new(1, -260, 1, -70),
-    BackgroundColor3 = Color3.fromRGB(30, 30, 30),
-    Parent = CrystalCheat
-})
+-- Store original values
+OriginalValues.WalkSpeed = Humanoid.WalkSpeed
+OriginalValues.JumpPower = Humanoid.JumpPower
 
-ApplyShadow(NotificationFrame, 5)
-ApplyGradient(NotificationFrame, Color3.fromRGB(40, 40, 40), Color3.fromRGB(25, 25, 25))
-
-local NotificationTitle = CreateInstance("TextLabel", {
-    Name = "Title",
-    BackgroundTransparency = 1,
-    Size = UDim2.new(1, -20, 0, 20),
-    Position = UDim2.new(0, 10, 0, 5),
-    Text = "CRYSTALCHEAT",
-    TextColor3 = Color3.fromRGB(60, 120, 255),
-    TextSize = 16,
-    Font = Enum.Font.GothamBold,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    Parent = NotificationFrame
-})
-
-local NotificationText = CreateInstance("TextLabel", {
-    Name = "Text",
-    BackgroundTransparency = 1,
-    Size = UDim2.new(1, -20, 0, 20),
-    Position = UDim2.new(0, 10, 0, 30),
-    Text = "Loaded successfully! Press INSERT to toggle.",
-    TextColor3 = Color3.fromRGB(255, 255, 255),
-    TextSize = 14,
-    Font = Enum.Font.Gotham,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    Parent = NotificationFrame
-})
-
--- Animate notification
-TweenService:Create(NotificationFrame, TweenInfo.new(0.5, Enum.EasingStyle.Quint), {Position = UDim2.new(1, -260, 1, -70)}):Play()
-
-spawn(function()
-    wait(3)
-    TweenService:Create(NotificationFrame, TweenInfo.new(0.5, Enum.EasingStyle.Quint), {Position = UDim2.new(1, 10, 1, -70)}):Play()
-    wait(0.6)
-    NotificationFrame:Destroy()
-end)
+-- Welcome notification
+NotificationSystem.Show("CRYSTALCHEAT", "Добро пожаловать в CRYSTALCHEAT v" .. CRYSTAL_VERSION, Color3.fromRGB(60, 120, 255), 5)
+NotificationSystem.Show("Управление", "Нажмите INSERT для переключения GUI", Color3.fromRGB(0, 200, 255), 5)
+NotificationSystem.Show("Fly", "Добавлен плавный полёт!", Color3.fromRGB(0, 255, 100), 5)
 
 -- Initialize
 UpdateTabs()
