@@ -21,10 +21,12 @@ local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
 local CRYSTAL_VERSION = "1.3"
 local DEFAULT_SPEED = 16
 local DEFAULT_JUMP = 50
-local DEFAULT_FLY_SPEED = 50
+local DEFAULT_FLY_SPEED = 2.5
+local MAX_FLY_SPEED = 100
 local KEYBIND_NONE = "None"
-local FLY_SMOOTHNESS = 0.2 -- Меньшее значение = более плавный полёт (0.1-0.3 оптимально)
-local FLY_DAMPING = 0.85 -- Коэффициент затухания для плавности (0.8-0.95 оптимально)
+local FLY_CONTROL_SMOOTHNESS = 0.2 -- Меньшее значение = более плавный полёт (0.1-0.3 оптимально)
+local FLY_DAMPING = 0.93 -- Коэффициент затухания для плавности (0.8-0.95 оптимально)
+local FLY_TILT_AMOUNT = 0.5 -- Наклон при движении (0 = без наклона)
 
 -- Original values storage
 local OriginalValues = {
@@ -55,7 +57,8 @@ local DragOffset = Vector2.new(0, 0)
 local IsMinimized = false
 
 -- Feature variables
-local FlyPart = nil
+local FlyBodyGyro = nil
+local FlyBodyVelocity = nil
 local FlyConnection = nil
 local NoclipConnection = nil
 local ESPObjects = {}
@@ -72,6 +75,8 @@ local FlyKeys = {
 -- Smooth fly variables
 local FlyVelocity = Vector3.new(0, 0, 0)
 local TargetFlyVelocity = Vector3.new(0, 0, 0)
+local CurrentFlySpeed = DEFAULT_FLY_SPEED
+local IsFlyAccelerating = false
 
 -- Connections storage for cleanup
 local Connections = {}
@@ -266,6 +271,12 @@ local function HandleFlyInput(input, isPressed)
         FlyKeys.Space = isPressed
     elseif input.KeyCode == Enum.KeyCode.LeftShift then
         FlyKeys.LeftShift = isPressed
+    elseif input.KeyCode == Enum.KeyCode.LeftControl and isPressed then
+        IsFlyAccelerating = true
+        CurrentFlySpeed = MAX_FLY_SPEED
+    elseif input.KeyCode == Enum.KeyCode.LeftControl and not isPressed then
+        IsFlyAccelerating = false
+        CurrentFlySpeed = Settings.Fly.Speed
     end
 end
 
@@ -273,115 +284,136 @@ local function ToggleFly(enabled)
     Settings.Fly.Enabled = enabled
     
     if enabled then
-        -- Create fly part if needed
-        if not FlyPart then
-            FlyPart = Instance.new("Part")
-            FlyPart.Name = "FlyPart"
-            FlyPart.Size = Vector3.new(1, 1, 1)
-            FlyPart.Transparency = 1
-            FlyPart.CanCollide = false
-            FlyPart.Anchored = true
-            FlyPart.Parent = workspace
-        end
+        -- Создаём необходимые объекты для полёта
+        Character.Humanoid.PlatformStand = true
         
-        -- Reset fly velocities
+        FlyBodyGyro = Instance.new("BodyGyro")
+        FlyBodyGyro.D = 50
+        FlyBodyGyro.P = 20000
+        FlyBodyGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+        FlyBodyGyro.CFrame = HumanoidRootPart.CFrame
+        FlyBodyGyro.Parent = HumanoidRootPart
+        
+        FlyBodyVelocity = Instance.new("BodyVelocity")
+        FlyBodyVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+        FlyBodyVelocity.Velocity = Vector3.new(0, 0, 0)
+        FlyBodyVelocity.Parent = HumanoidRootPart
+        
+        -- Сбрасываем скорость и направление
+        CurrentFlySpeed = Settings.Fly.Speed
         FlyVelocity = Vector3.new(0, 0, 0)
         TargetFlyVelocity = Vector3.new(0, 0, 0)
         
-        -- Position fly part at character
-        local character = LocalPlayer.Character
-        if character and character:FindFirstChild("HumanoidRootPart") then
-            FlyPart.CFrame = character.HumanoidRootPart.CFrame
-            
-            -- Connect input events for flying
-            local flyInputBeganConnection = AddConnection(UserInputService.InputBegan:Connect(function(input, gameProcessed)
-                if not gameProcessed then
-                    HandleFlyInput(input, true)
-                end
-            end))
-            
-            local flyInputEndedConnection = AddConnection(UserInputService.InputEnded:Connect(function(input, gameProcessed)
-                if not gameProcessed then
-                    HandleFlyInput(input, false)
-                end
-            end))
-            
-            -- Connect fly update loop
-            if FlyConnection then FlyConnection:Disconnect() end
-            
-            FlyConnection = AddConnection(RunService.RenderStepped:Connect(function(deltaTime)
-                if not Settings.Fly.Enabled then return end
-                
-                -- Check if character still exists
-                if not character or not character.Parent or not character:FindFirstChild("HumanoidRootPart") then
-                    ToggleFly(false)
-                    return
-                end
-                
-                -- Calculate target velocity based on input
-                local targetVelocity = Vector3.new(0, 0, 0)
-                
-                -- Forward/backward movement based on camera direction
-                if FlyKeys.W then
-                    targetVelocity = targetVelocity + Camera.CFrame.LookVector
-                end
-                if FlyKeys.S then
-                    targetVelocity = targetVelocity - Camera.CFrame.LookVector
-                end
-                
-                -- Left/right movement based on camera right vector
-                if FlyKeys.A then
-                    targetVelocity = targetVelocity - Camera.CFrame.RightVector
-                end
-                if FlyKeys.D then
-                    targetVelocity = targetVelocity + Camera.CFrame.RightVector
-                end
-                
-                -- Up/down movement
-                if FlyKeys.Space then
-                    targetVelocity = targetVelocity + Vector3.new(0, 1, 0)
-                end
-                if FlyKeys.LeftShift then
-                    targetVelocity = targetVelocity - Vector3.new(0, 1, 0)
-                end
-                
-                -- Normalize and apply speed
-                if targetVelocity.Magnitude > 0 then
-                    targetVelocity = targetVelocity.Unit * (Settings.Fly.Speed / 10)
-                end
-                
-                -- Set target velocity
-                TargetFlyVelocity = targetVelocity
-                
-                -- Smoothly interpolate current velocity towards target velocity
-                FlyVelocity = FlyVelocity:Lerp(TargetFlyVelocity, FLY_SMOOTHNESS)
-                
-                -- Apply damping when no keys are pressed
-                if TargetFlyVelocity.Magnitude == 0 then
-                    FlyVelocity = FlyVelocity * FLY_DAMPING
-                end
-                
-                -- Update fly part position
-                FlyPart.CFrame = FlyPart.CFrame + FlyVelocity
-                
-                -- Make character follow fly part with smooth interpolation
-                local targetCFrame = CFrame.new(FlyPart.Position)
-                character.HumanoidRootPart.CFrame = character.HumanoidRootPart.CFrame:Lerp(targetCFrame, 0.2)
-                character.HumanoidRootPart.Velocity = Vector3.new(0, 0, 0)
-            end))
-        end
+        -- Connect input events for flying
+        local flyInputBeganConnection = AddConnection(UserInputService.InputBegan:Connect(function(input, gameProcessed)
+            if not gameProcessed then
+                HandleFlyInput(input, true)
+            end
+        end))
         
-        NotificationSystem.Show("Fly", "Плавный полёт включен", Color3.fromRGB(0, 255, 0))
+        local flyInputEndedConnection = AddConnection(UserInputService.InputEnded:Connect(function(input, gameProcessed)
+            if not gameProcessed then
+                HandleFlyInput(input, false)
+            end
+        end))
+        
+        -- Connect fly update loop
+        if FlyConnection then FlyConnection:Disconnect() end
+        
+        FlyConnection = AddConnection(RunService.RenderStepped:Connect(function(deltaTime)
+            if not Settings.Fly.Enabled then return end
+            
+            -- Check if character still exists
+            if not Character or not Character.Parent or not HumanoidRootPart or not HumanoidRootPart.Parent then
+                ToggleFly(false)
+                return
+            end
+            
+            -- Calculate target velocity based on input
+            local targetVelocity = Vector3.new(0, 0, 0)
+            
+            -- Forward/backward movement based on camera direction
+            if FlyKeys.W then
+                targetVelocity = targetVelocity + Camera.CFrame.LookVector
+            end
+            if FlyKeys.S then
+                targetVelocity = targetVelocity - Camera.CFrame.LookVector
+            end
+            
+            -- Left/right movement based on camera right vector
+            if FlyKeys.A then
+                targetVelocity = targetVelocity - Camera.CFrame.RightVector
+            end
+            if FlyKeys.D then
+                targetVelocity = targetVelocity + Camera.CFrame.RightVector
+            end
+            
+            -- Up/down movement
+            if FlyKeys.Space then
+                targetVelocity = targetVelocity + Vector3.new(0, 1, 0)
+            end
+            if FlyKeys.LeftShift then
+                targetVelocity = targetVelocity - Vector3.new(0, 1, 0)
+            end
+            
+            -- Normalize and apply speed
+            if targetVelocity.Magnitude > 0 then
+                targetVelocity = targetVelocity.Unit * CurrentFlySpeed
+            end
+            
+            -- Set target velocity
+            TargetFlyVelocity = targetVelocity
+            
+            -- Smoothly interpolate current velocity towards target velocity
+            FlyVelocity = FlyVelocity:Lerp(TargetFlyVelocity, FLY_CONTROL_SMOOTHNESS)
+            
+            -- Apply damping when no keys are pressed
+            if TargetFlyVelocity.Magnitude == 0 then
+                FlyVelocity = FlyVelocity * FLY_DAMPING
+            end
+            
+            -- Update BodyVelocity
+            FlyBodyVelocity.Velocity = FlyVelocity
+            
+            -- Update BodyGyro for tilting in the direction of movement
+            if FlyVelocity.Magnitude > 0.1 then
+                local moveDirection = FlyVelocity.Unit
+                local lookDirection = Camera.CFrame.LookVector
+                
+                -- Blend movement direction and look direction for tilt
+                local targetCFrame = CFrame.lookAt(
+                    HumanoidRootPart.Position, 
+                    HumanoidRootPart.Position + Vector3.new(
+                        lookDirection.X * (1 - FLY_TILT_AMOUNT) + moveDirection.X * FLY_TILT_AMOUNT,
+                        lookDirection.Y,
+                        lookDirection.Z * (1 - FLY_TILT_AMOUNT) + moveDirection.Z * FLY_TILT_AMOUNT
+                    )
+                )
+                
+                FlyBodyGyro.CFrame = targetCFrame
+            else
+                FlyBodyGyro.CFrame = Camera.CFrame
+            end
+        end))
+        
+        NotificationSystem.Show("Fly", "Плавный полёт включен (LeftControl для ускорения)", Color3.fromRGB(0, 255, 0))
     else
         -- Clean up fly resources
+        Character.Humanoid.PlatformStand = false
+        
         if FlyConnection then
             FlyConnection:Disconnect()
             FlyConnection = nil
         end
         
-        if FlyPart then
-            FlyPart:Destroy()
-            FlyPart = nil
+        if FlyBodyGyro then
+            FlyBodyGyro:Destroy()
+            FlyBodyGyro = nil
+        end
+        
+        if FlyBodyVelocity then
+            FlyBodyVelocity:Destroy()
+            FlyBodyVelocity = nil
         end
         
         -- Reset fly keys
@@ -392,6 +424,7 @@ local function ToggleFly(enabled)
         -- Reset velocities
         FlyVelocity = Vector3.new(0, 0, 0)
         TargetFlyVelocity = Vector3.new(0, 0, 0)
+        IsFlyAccelerating = false
         
         NotificationSystem.Show("Fly", "Полёт отключен", Color3.fromRGB(255, 0, 0))
     end
@@ -399,6 +432,11 @@ end
 
 local function UpdateFlySpeed(value)
     Settings.Fly.Speed = value
+    
+    if not IsFlyAccelerating then
+        CurrentFlySpeed = value
+    end
+    
     NotificationSystem.Show("Fly Speed", "Установлена скорость: " .. value, Color3.fromRGB(0, 200, 255))
 end
 
@@ -702,6 +740,8 @@ local function ToggleNoFall(enabled)
         end))
         
         NotificationSystem.Show("No Fall Damage", "Защита от падения включена", Color3.fromRGB(0, 255, 0))
+    else
+        NotificationSystem.Show("No Fall Damage", "  "Защита от падения включена", Color3.fromRGB(0, 255, 0))
     else
         NotificationSystem.Show("No Fall Damage", "Защита от падения отключена", Color3.fromRGB(255, 0, 0))
     end
@@ -1281,7 +1321,7 @@ local FlyCheckbox = CreateCheckbox(MovementContent, UDim2.new(0, 10, 0, 10), "Fl
     ToggleFly(state)
 end)
 
-local FlySpeedSlider = CreateSlider(MovementContent, UDim2.new(0, 10, 0, 50), "Fly Speed", 10, 200, Settings.Fly.Speed, function(value)
+local FlySpeedSlider = CreateSlider(MovementContent, UDim2.new(0, 10, 0, 50), "Fly Speed", 1, 10, Settings.Fly.Speed, function(value)
     UpdateFlySpeed(value)
 end)
 
@@ -1552,7 +1592,7 @@ OriginalValues.JumpPower = Humanoid.JumpPower
 -- Welcome notification
 NotificationSystem.Show("CRYSTALCHEAT", "Добро пожаловать в CRYSTALCHEAT v" .. CRYSTAL_VERSION, Color3.fromRGB(60, 120, 255), 5)
 NotificationSystem.Show("Управление", "Нажмите INSERT для переключения GUI", Color3.fromRGB(0, 200, 255), 5)
-NotificationSystem.Show("Fly", "Добавлен плавный полёт!", Color3.fromRGB(0, 255, 100), 5)
+NotificationSystem.Show("Fly", "Добавлен плавный полёт! Используйте LeftControl для ускорения", Color3.fromRGB(0, 255, 100), 5)
 
 -- Initialize
 UpdateTabs()
